@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SL GIF-to-SpriteSheet Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #121417;
+      --panel: #1b1f24;
+      --border: #2e343d;
+      --text: #e6edf3;
+      --muted: #9aa4b2;
+      --accent: #4ea1ff;
+      --accent-subtle: rgba(78, 161, 255, 0.14);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 16px; }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+      gap: 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 14px;
+      border-radius: 8px;
+      align-items: end;
+    }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    input, select, button {
+      background: #101316;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 9px;
+      font-size: 13px;
+    }
+    button.primary {
+      cursor: pointer;
+      background: var(--accent);
+      color: #08111c;
+      font-weight: 600;
+      border: none;
+    }
+    button.secondary {
+      cursor: pointer;
+      background: var(--accent-subtle);
+      color: var(--text);
+      border: 1px solid rgba(78, 161, 255, 0.4);
+      font-weight: 500;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .card h2 { margin: 0; font-size: 14px; color: var(--muted); font-weight: 600; }
+    canvas.checker {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+      background-image:
+        linear-gradient(45deg, #252a32 25%, transparent 25%),
+        linear-gradient(-45deg, #252a32 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #252a32 75%),
+        linear-gradient(-45deg, transparent 75%, #252a32 75%);
+      background-size: 16px 16px;
+      background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    }
+    pre {
+      margin: 0;
+      background: #101316;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 12px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+    .meta { font-size: 12px; color: var(--muted); }
+    .row-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div>
+      <h1 style="margin:0 0 4px;font-size:20px;">SL GIF → Sprite Sheet Prototype</h1>
+      <div class="row-inline">
+        <div class="meta" id="status">Pick an animated GIF to composite frames and generate llSetTextureAnim() output.</div>
+        <button type="button" class="secondary" id="applyBestFitBtn" disabled style="padding:3px 8px;font-size:12px;">
+          Apply Best Fit: <span id="bestFitLabel">—</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="controls">
+      <label>
+        Animated GIF
+        <input type="file" id="gifInput" accept="image/gif" />
+      </label>
+      <label>
+        Columns (X frames)
+        <input type="number" id="colsInput" min="1" max="64" value="13" />
+      </label>
+      <label>
+        Rows (Y frames)
+        <input type="number" id="rowsInput" min="1" max="64" value="8" />
+      </label>
+      <label>
+        Sheet Width (PoT)
+        <select id="sheetWInput">
+          <option value="2048" selected>2048 px</option>
+          <option value="1024">1024 px</option>
+          <option value="512">512 px</option>
+          <option value="256">256 px</option>
+          <option value="128">128 px</option>
+          <option value="64">64 px</option>
+        </select>
+      </label>
+      <label>
+        Sheet Height (PoT)
+        <select id="sheetHInput">
+          <option value="2048" selected>2048 px</option>
+          <option value="1024">1024 px</option>
+          <option value="512">512 px</option>
+          <option value="256">256 px</option>
+          <option value="128">128 px</option>
+          <option value="64">64 px</option>
+        </select>
+      </label>
+      <label>
+        Cell Fill Mode
+        <select id="fillModeInput">
+          <option value="stretch" selected>Stretch / Fit cell (no UV margin)</option>
+          <option value="preserve">Preserve pixel size (keep aspect)</option>
+        </select>
+      </label>
+      <label>
+        Playback Rate (FPS)
+        <input type="number" id="fpsInput" min="0.1" max="60" step="0.5" value="15" />
+      </label>
+      <label>
+        Export
+        <button type="button" class="primary" id="downloadBtn" disabled>Download PNG</button>
+      </label>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Live SL Playback Preview</h2>
+        <canvas id="previewCanvas" class="checker" width="256" height="256"></canvas>
+        <div class="meta" id="previewMeta">Waiting for GIF…</div>
+      </div>
+
+      <div class="card">
+        <h2>Generated Sprite Sheet</h2>
+        <canvas id="sheetCanvas" class="checker" width="512" height="512"></canvas>
+        <div class="meta" id="sheetMeta">—</div>
+      </div>
+
+      <div class="card">
+        <h2>LSL Snippet</h2>
+        <pre id="lslOutput">// Load a GIF to generate llSetTextureAnim() parameters</pre>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { parseGIF, decompressFrames } from "https://esm.sh/gifuct-js@2.1.2";
+
+    const POT_SIZES = [64, 128, 256, 512, 1024, 2048];
+
+    const gifInput = document.getElementById("gifInput");
+    const colsInput = document.getElementById("colsInput");
+    const rowsInput = document.getElementById("rowsInput");
+    const sheetWInput = document.getElementById("sheetWInput");
+    const sheetHInput = document.getElementById("sheetHInput");
+    const fillModeInput = document.getElementById("fillModeInput");
+    const fpsInput = document.getElementById("fpsInput");
+    const downloadBtn = document.getElementById("downloadBtn");
+    const applyBestFitBtn = document.getElementById("applyBestFitBtn");
+    const bestFitLabel = document.getElementById("bestFitLabel");
+    const statusEl = document.getElementById("status");
+    const sheetCanvas = document.getElementById("sheetCanvas");
+    const sheetCtx = sheetCanvas.getContext("2d");
+    const previewCanvas = document.getElementById("previewCanvas");
+    const previewCtx = previewCanvas.getContext("2d");
+    const sheetMeta = document.getElementById("sheetMeta");
+    const previewMeta = document.getElementById("previewMeta");
+    const lslOutput = document.getElementById("lslOutput");
+
+    let compositedFrames = [];
+    let animTimer = null;
+    let currentFrame = 0;
+    let currentBestFit = null;
+
+    gifInput.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const buf = await file.arrayBuffer();
+      const gif = parseGIF(buf);
+      const rawFrames = decompressFrames(gif, true);
+      if (!rawFrames.length) {
+        statusEl.textContent = "Could not decode any frames from that GIF.";
+        return;
+      }
+
+      const width = gif.lsd.width;
+      const height = gif.lsd.height;
+      compositedFrames = compositeGifFrames(rawFrames, width, height);
+
+      const n = compositedFrames.length;
+      const cols = Math.max(1, parseInt(colsInput.value, 10) || 1);
+      const rows = Math.max(1, parseInt(rowsInput.value, 10) || 1);
+      if (cols * rows < n) {
+        const autoCols = Math.ceil(Math.sqrt(n));
+        const autoRows = Math.ceil(n / autoCols);
+        colsInput.value = autoCols;
+        rowsInput.value = autoRows;
+      }
+
+      const delaysMs = rawFrames
+        .map((f) => (f.delay || 10) * 10)
+        .filter((d) => d > 0);
+      if (delaysMs.length) {
+        const avgMs = delaysMs.reduce((a, b) => a + b, 0) / delaysMs.length;
+        fpsInput.value = Math.min(60, Math.max(0.5, +(1000 / avgMs).toFixed(1)));
+      }
+
+      statusEl.textContent = `Loaded ${file.name}: ${n} frames (${width}×${height} logical screen).`;
+      rebuildAll();
+    });
+
+    [colsInput, rowsInput, sheetWInput, sheetHInput, fillModeInput, fpsInput].forEach((el) => {
+      el.addEventListener("input", rebuildAll);
+      el.addEventListener("change", rebuildAll);
+    });
+
+    applyBestFitBtn.addEventListener("click", () => {
+      if (!currentBestFit) return;
+      sheetWInput.value = String(currentBestFit.w);
+      sheetHInput.value = String(currentBestFit.h);
+      rebuildAll();
+    });
+
+    downloadBtn.addEventListener("click", () => {
+      sheetCanvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `sl_spritesheet_${sheetWInput.value}x${sheetHInput.value}_${colsInput.value}x${rowsInput.value}.png`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, "image/png");
+    });
+
+    function computeBestFit(cols, rows, srcW, srcH, fillMode) {
+      const targetAspect = srcW / Math.max(1, srcH);
+      let best = null;
+
+      for (const w of POT_SIZES) {
+        for (const h of POT_SIZES) {
+          const cellW = w / cols;
+          const cellH = h / rows;
+          if (cellW < 8 || cellH < 8) continue;
+
+          const cellAspect = cellW / cellH;
+          // Lower is better: 0 means exact aspect match
+          const aspectError = Math.abs(Math.log(cellAspect / targetAspect));
+
+          // In stretch mode, distortion matters most; higher texel density is a tie-breaker.
+          // In preserve mode, avoid wasting huge area if src frames are small, while keeping crispness.
+          const texels = cellW * cellH;
+          const reqTexels = srcW * srcH;
+          const resolutionRatio = texels / Math.max(1, reqTexels);
+          const underResPenalty = resolutionRatio < 1 ? (1 - resolutionRatio) * 1.5 : 0;
+          const overResPenalty = fillMode === "preserve" && resolutionRatio > 2.2
+            ? Math.log2(resolutionRatio / 2.2) * 0.25
+            : 0;
+
+          const score = aspectError * 2.0 + underResPenalty + overResPenalty - Math.min(0.4, Math.log10(Math.max(1, texels)) * 0.05);
+
+          if (!best || score < best.score) {
+            best = { w, h, cellW, cellH, cellAspect, targetAspect, score };
+          }
+        }
+      }
+      return best;
+    }
+
+    function compositeGifFrames(rawFrames, width, height) {
+      const bufferCanvas = document.createElement("canvas");
+      bufferCanvas.width = width;
+      bufferCanvas.height = height;
+      const bufferCtx = bufferCanvas.getContext("2d");
+
+      const patchCanvas = document.createElement("canvas");
+      const patchCtx = patchCanvas.getContext("2d");
+
+      const frames = [];
+      let previousSnapshot = null;
+
+      for (const frame of rawFrames) {
+        const { left, top, width: pw, height: ph } = frame.dims;
+        const disposal = frame.disposalType;
+
+        if (disposal === 3) {
+          previousSnapshot = bufferCtx.getImageData(0, 0, width, height);
+        }
+
+        patchCanvas.width = pw;
+        patchCanvas.height = ph;
+        const imgData = patchCtx.createImageData(pw, ph);
+        imgData.data.set(frame.patch);
+        patchCtx.putImageData(imgData, 0, 0);
+
+        bufferCtx.drawImage(patchCanvas, left, top);
+
+        const frameCanvas = document.createElement("canvas");
+        frameCanvas.width = width;
+        frameCanvas.height = height;
+        frameCanvas.getContext("2d").drawImage(bufferCanvas, 0, 0);
+        frames.push(frameCanvas);
+
+        if (disposal === 2) {
+          bufferCtx.clearRect(left, top, pw, ph);
+        } else if (disposal === 3 && previousSnapshot) {
+          bufferCtx.putImageData(previousSnapshot, 0, 0);
+        }
+      }
+
+      return frames;
+    }
+
+    function rebuildAll() {
+      if (!compositedFrames.length) return;
+
+      const cols = Math.max(1, parseInt(colsInput.value, 10) || 1);
+      const rows = Math.max(1, parseInt(rowsInput.value, 10) || 1);
+      const sheetW = parseInt(sheetWInput.value, 10) || 2048;
+      const sheetH = parseInt(sheetHInput.value, 10) || 2048;
+      const fillMode = fillModeInput.value;
+      const fps = Math.max(0.1, parseFloat(fpsInput.value) || 10);
+
+      const srcW = compositedFrames[0].width;
+      const srcH = compositedFrames[0].height;
+
+      currentBestFit = computeBestFit(cols, rows, srcW, srcH, fillMode);
+      if (currentBestFit) {
+        bestFitLabel.textContent = `${currentBestFit.w}×${currentBestFit.h}`;
+        applyBestFitBtn.disabled =
+          currentBestFit.w === sheetW && currentBestFit.h === sheetH;
+      }
+
+      sheetCanvas.width = sheetW;
+      sheetCanvas.height = sheetH;
+      sheetCtx.clearRect(0, 0, sheetW, sheetH);
+
+      const cellW = sheetW / cols;
+      const cellH = sheetH / rows;
+
+      const count = compositedFrames.length;
+      for (let i = 0; i < count; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        if (row >= rows) break;
+
+        const dx = col * cellW;
+        const dy = row * cellH;
+
+        if (fillMode === "stretch") {
+          sheetCtx.drawImage(compositedFrames[i], dx, dy, cellW, cellH);
+        } else {
+          sheetCtx.drawImage(compositedFrames[i], dx, dy, srcW, srcH);
+        }
+      }
+
+      const capacity = cols * rows;
+      const cellAspect = cellW / cellH;
+      const srcAspect = srcW / Math.max(1, srcH);
+      const aspectDeltaPct = ((cellAspect / srcAspect - 1) * 100).toFixed(1);
+
+      sheetMeta.textContent =
+        `Sheet: ${sheetW}×${sheetH}px | Cell: ${cellW.toFixed(1)}×${cellH.toFixed(1)}px | ` +
+        `Aspect delta: ${aspectDeltaPct > 0 ? "+" : ""}${aspectDeltaPct}% | ` +
+        `Frames: ${count}/${capacity}` + (count > capacity ? " (clipped—increase grid!)" : "");
+
+      const maxSide = 420;
+      const scale = Math.min(maxSide / Math.max(1, cellW), maxSide / Math.max(1, cellH), 2);
+      previewCanvas.width = Math.max(64, Math.round(cellW * scale));
+      previewCanvas.height = Math.max(64, Math.round(cellH * scale));
+      previewMeta.textContent = `Simulating ${Math.min(count, capacity)} frames at ${fps} FPS`;
+
+      lslOutput.textContent =
+`default
+{
+    state_entry()
+    {
+        llSetTextureAnim(ANIM_ON | LOOP, ALL_SIDES, ${cols}, ${rows}, 0.0, ${Math.min(count, capacity)}.0, ${fps});
+    }
+}`;
+
+      downloadBtn.disabled = false;
+      startPreviewLoop(Math.min(count, capacity), cols, rows, sheetW, sheetH, fps);
+    }
+
+    function startPreviewLoop(frameCount, cols, rows, sheetW, sheetH, fps) {
+      if (animTimer) clearInterval(animTimer);
+      currentFrame = 0;
+
+      const cellW = sheetW / cols;
+      const cellH = sheetH / rows;
+      const intervalMs = Math.max(16, Math.round(1000 / fps));
+
+      const drawStep = () => {
+        const idx = currentFrame % frameCount;
+        const col = idx % cols;
+        const row = Math.floor(idx / cols);
+
+        previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+        previewCtx.drawImage(
+          sheetCanvas,
+          col * cellW,
+          row * cellH,
+          cellW,
+          cellH,
+          0,
+          0,
+          previewCanvas.width,
+          previewCanvas.height
+        );
+        currentFrame++;
+      };
+
+      drawStep();
+      animTimer = setInterval(drawStep, intervalMs);
+    }
+  </script>
+</body>
+</html>
